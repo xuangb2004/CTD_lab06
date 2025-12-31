@@ -1,5 +1,4 @@
-/* 
- * @copyright (c) 2008, Hedspi, Hanoi University of Technology
+/* * @copyright (c) 2008, Hedspi, Hanoi University of Technology
  * @author Huu-Duc Nguyen
  * @version 1.0
  */
@@ -12,6 +11,7 @@
 #include "semantics.h"
 #include "error.h"
 #include "debug.h"
+#include "codegen.h"
 
 Token *currentToken;
 Token *lookAhead;
@@ -29,7 +29,6 @@ void scan(void) {
 
 void eat(TokenType tokenType) {
   if (lookAhead->tokenType == tokenType) {
-    //    printToken(lookAhead);
     scan();
   } else missingToken(tokenType, lookAhead->lineNo, lookAhead->colNo);
 }
@@ -47,6 +46,8 @@ void compileProgram(void) {
 
   compileBlock();
   eat(SB_PERIOD);
+
+  genHL(); // [CODEGEN] Dung chuong trinh
 
   exitBlock();
 }
@@ -114,10 +115,20 @@ void compileVarDecls(void) {
 }
 
 void compileBlock(void) {
+  Instruction* jmp;
+  
+  // [CODEGEN] Nhay qua phan khai bao
+  jmp = genJ(DC_VALUE);
+
   compileConstDecls();
   compileTypeDecls();
   compileVarDecls();
   compileSubDecls();
+
+  // [CODEGEN] Cap nhat dich nhay
+  updateJ(jmp, getCurrentCodeAddress());
+  // [CODEGEN] Cap phat bo nho (Stack Frame)
+  genINT(symtab->currentScope->frameSize);
 
   eat(KW_BEGIN);
   compileStatements();
@@ -152,7 +163,15 @@ void compileFuncDecl(void) {
   funcObj->funcAttrs->returnType = returnType;
 
   eat(SB_SEMICOLON);
+  
+  // [CODEGEN] Cap phat bo nho cho ham
+  genINT(funcObj->funcAttrs->scope->frameSize);
+
   compileBlock();
+  
+  // [CODEGEN] Ket thuc ham
+  genEF();
+
   eat(SB_SEMICOLON);
 
   exitBlock();
@@ -173,7 +192,15 @@ void compileProcDecl(void) {
   compileParams();
 
   eat(SB_SEMICOLON);
+  
+  // [CODEGEN] Cap phat bo nho cho thu tuc
+  genINT(procObj->procAttrs->scope->frameSize);
+
   compileBlock();
+  
+  // [CODEGEN] Ket thuc thu tuc
+  genEP();
+
   eat(SB_SEMICOLON);
 
   exitBlock();
@@ -327,7 +354,7 @@ void compileParams(void) {
 void compileParam(void) {
   Object* param;
   Type* type;
-  enum ParamKind paramKind = PARAM_VALUE;
+  ParamKind paramKind = PARAM_VALUE;
 
   if (lookAhead->tokenType == KW_VAR) {
     paramKind = PARAM_REFERENCE;
@@ -393,6 +420,9 @@ Type* compileLValue(void) {
 
   switch (var->kind) {
   case OBJ_VARIABLE:
+    // [CODEGEN] Sinh ma dia chi bien
+    genVariableAddress(var);
+
     if (var->varAttrs->type->typeClass == TP_ARRAY) {
       varType = compileIndexes(var->varAttrs->type);
     }
@@ -400,9 +430,15 @@ Type* compileLValue(void) {
       varType = var->varAttrs->type;
     break;
   case OBJ_PARAMETER:
+    // [CODEGEN] Sinh ma dia chi tham so
+    genVariableAddress(var);
+    if (var->paramAttrs->kind == PARAM_VALUE) {
+    }
     varType = var->paramAttrs->type;
     break;
   case OBJ_FUNCTION:
+    // [CODEGEN] Sinh ma dia chi gia tri tra ve
+    genVariableAddress(var);
     varType = var->funcAttrs->returnType;
     break;
   default: 
@@ -421,6 +457,9 @@ void compileAssignSt(void) {
   eat(SB_ASSIGN);
   expType = compileExpression();
   checkTypeEquality(varType, expType);
+
+  // [CODEGEN] Luu gia tri vao bien
+  genST();
 }
 
 void compileCallSt(void) {
@@ -430,7 +469,14 @@ void compileCallSt(void) {
   eat(TK_IDENT);
 
   proc = checkDeclaredProcedure(currentToken->string);
-  compileArguments(proc->procAttrs->paramList);
+  
+  if (isPredefinedProcedure(proc)) {
+      compileArguments(proc->procAttrs->paramList);
+      genPredefinedProcedureCall(proc);
+  } else {
+      compileArguments(proc->procAttrs->paramList);
+      genCALL(PROCEDURE_SCOPE(proc)->level, proc->procAttrs->codeAddress);
+  }
 }
 
 void compileGroupSt(void) {
@@ -440,40 +486,104 @@ void compileGroupSt(void) {
 }
 
 void compileIfSt(void) {
+  Instruction* jmp;
+  Instruction* fjmp;
+
   eat(KW_IF);
   compileCondition();
   eat(KW_THEN);
+
+  // [CODEGEN]
+  fjmp = genFJ(DC_VALUE);
+
   compileStatement();
+  
   if (lookAhead->tokenType == KW_ELSE) {
+    // [CODEGEN]
+    jmp = genJ(DC_VALUE);
+    updateFJ(fjmp, getCurrentCodeAddress());
+    
     eat(KW_ELSE);
     compileStatement();
+    
+    // [CODEGEN]
+    updateJ(jmp, getCurrentCodeAddress());
+  } else {
+    // [CODEGEN]
+    updateFJ(fjmp, getCurrentCodeAddress());
   }
 }
 
 void compileWhileSt(void) {
+  CodeAddress label;
+  Instruction* fjmp;
+
   eat(KW_WHILE);
+  
+  // [CODEGEN]
+  label = getCurrentCodeAddress();
+
   compileCondition();
+
+  // [CODEGEN]
+  fjmp = genFJ(DC_VALUE);
+
   eat(KW_DO);
   compileStatement();
+
+  // [CODEGEN]
+  genJ(label);
+  updateFJ(fjmp, getCurrentCodeAddress());
 }
 
 void compileForSt(void) {
-  Type* varType;
+  CodeAddress label;
+  Instruction* fjmp;
+  Object* var;
   Type *type;
 
   eat(KW_FOR);
 
-  varType = compileLValue();
+  // Xu ly bien dem
+  eat(TK_IDENT);
+  var = checkDeclaredVariable(currentToken->string);
+  // [CODEGEN]
+  genVariableAddress(var);
+
   eat(SB_ASSIGN);
   type = compileExpression();
-  checkTypeEquality(varType, type);
+  checkTypeEquality(var->varAttrs->type, type);
+
+  // [CODEGEN] Gan gia tri khoi dau
+  genST();
+
+  // [CODEGEN] Nhan vong lap
+  label = getCurrentCodeAddress();
+
+  // [CODEGEN] Kiem tra dieu kien lap
+  genVariableValue(var);
 
   eat(KW_TO);
   type = compileExpression();
-  checkTypeEquality(varType, type);
+  checkTypeEquality(var->varAttrs->type, type);
+
+  // [CODEGEN] So sanh LE
+  genLE();
+  fjmp = genFJ(DC_VALUE);
 
   eat(KW_DO);
   compileStatement();
+
+  // [CODEGEN] Tang bien dem
+  genVariableAddress(var);
+  genVariableValue(var);
+  genLC(1);
+  genAD();
+  genST();
+
+  // [CODEGEN] Quay lai dau vong lap
+  genJ(label);
+  updateFJ(fjmp, getCurrentCodeAddress());
 
 }
 
@@ -573,6 +683,17 @@ void compileCondition(void) {
 
   type2 = compileExpression();
   checkTypeEquality(type1,type2);
+
+  // [CODEGEN]
+  switch (op) {
+  case SB_EQ: genEQ(); break;
+  case SB_NEQ: genNE(); break;
+  case SB_LE: genLE(); break;
+  case SB_LT: genLT(); break;
+  case SB_GE: genGE(); break;
+  case SB_GT: genGT(); break;
+  default: break;
+  }
 }
 
 Type* compileExpression(void) {
@@ -588,6 +709,7 @@ Type* compileExpression(void) {
     eat(SB_MINUS);
     type = compileExpression2();
     checkIntType(type);
+    genNEG();
     break;
   default:
     type = compileExpression2();
@@ -615,6 +737,7 @@ Type* compileExpression3(Type* argType1) {
     checkIntType(argType1);
     argType2 = compileTerm();
     checkIntType(argType2);
+    genAD();
     resultType = compileExpression3(argType1);
     break;
   case SB_MINUS:
@@ -622,6 +745,7 @@ Type* compileExpression3(Type* argType1) {
     checkIntType(argType1);
     argType2 = compileTerm();
     checkIntType(argType2);
+    genSB();
     resultType = compileExpression3(argType1);
     break;
     // check the FOLLOW set
@@ -666,6 +790,7 @@ Type* compileTerm2(Type* argType1) {
     checkIntType(argType1);
     argType2 = compileFactor();
     checkIntType(argType2);
+    genML();
     resultType = compileTerm2(argType1);
     break;
   case SB_SLASH:
@@ -673,6 +798,7 @@ Type* compileTerm2(Type* argType1) {
     checkIntType(argType1);
     argType2 = compileFactor();
     checkIntType(argType2);
+    genDV();
     resultType = compileTerm2(argType1);
     break;
     // check the FOLLOW set
@@ -709,10 +835,12 @@ Type* compileFactor(void) {
   case TK_NUMBER:
     eat(TK_NUMBER);
     type = intType;
+    genLC(currentToken->value);
     break;
   case TK_CHAR:
     eat(TK_CHAR);
     type = charType;
+    genLC(currentToken->string[0]);
     break;
   case TK_IDENT:
     eat(TK_IDENT);
@@ -723,9 +851,11 @@ Type* compileFactor(void) {
       switch (obj->constAttrs->value->type) {
       case TP_INT:
 	type = intType;
+    genLC(obj->constAttrs->value->intValue);
 	break;
       case TP_CHAR:
 	type = charType;
+    genLC(obj->constAttrs->value->charValue);
 	break;
       default:
 	break;
@@ -733,22 +863,41 @@ Type* compileFactor(void) {
       break;
     case OBJ_VARIABLE:
       if (obj->varAttrs->type->typeClass == TP_ARRAY) {
-	type = compileIndexes(obj->varAttrs->type);
+        genVariableAddress(obj);
+        type = compileIndexes(obj->varAttrs->type);
+        genLI();
       } else {
-	type = obj->varAttrs->type;
+        genVariableValue(obj);
+        type = obj->varAttrs->type;
       }
       break;
     case OBJ_PARAMETER:
+      genVariableValue(obj);
+      if (obj->paramAttrs->kind == PARAM_VALUE) {
+      } else {
+        genLI();
+      }
       type = obj->paramAttrs->type;
       break;
     case OBJ_FUNCTION:
-      compileArguments(obj->funcAttrs->paramList);
+      if (isPredefinedFunction(obj)) {
+          compileArguments(obj->funcAttrs->paramList);
+          genPredefinedFunctionCall(obj);
+      } else {
+          compileArguments(obj->funcAttrs->paramList);
+          genCALL(FUNCTION_SCOPE(obj)->level, obj->funcAttrs->codeAddress);
+      }
       type = obj->funcAttrs->returnType;
       break;
     default: 
       error(ERR_INVALID_FACTOR,currentToken->lineNo, currentToken->colNo);
       break;
     }
+    break;
+  case SB_LPAR:
+    eat(SB_LPAR);
+    type = compileExpression();
+    eat(SB_RPAR);
     break;
   default:
     error(ERR_INVALID_FACTOR, lookAhead->lineNo, lookAhead->colNo);
@@ -767,6 +916,8 @@ Type* compileIndexes(Type* arrayType) {
     checkIntType(type);
     checkArrayType(arrayType);
 
+    genAD();
+
     arrayType = arrayType->elementType;
     eat(SB_RSEL);
   }
@@ -782,12 +933,16 @@ int compile(char *fileName) {
   lookAhead = getValidToken();
 
   initSymTab();
+  initCodeBuffer();
 
   compileProgram();
 
   printObject(symtab->program,0);
+  
 
   cleanSymTab();
+  cleanCodeBuffer();
+
   free(currentToken);
   free(lookAhead);
   closeInputStream();

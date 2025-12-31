@@ -1,87 +1,65 @@
-/* 
- * @copyright (c) 2008, Hedspi, Hanoi University of Technology
- * @author Huu-Duc Nguyen
- * @version 1.0
- */
-
+/* codegen.h */
 #ifndef __CODEGEN_H__
 #define __CODEGEN_H__
 
 #include "symtab.h"
 #include "instructions.h"
 
-#define RESERVED_WORDS 4
+#define DC_VALUE 0  // Dummy Code Value (dùng làm placeholder)
 
-#define PROCEDURE_PARAM_COUNT(proc) (proc->procAttrs->numOfParams)
-#define PROCEDURE_SCOPE(proc) (proc->procAttrs->scope)
-#define PROCEDURE_FRAME_SIZE(proc) (proc->procAttrs->scope->frameSize)
+typedef int CodeAddress;
 
-#define FUNCTION_PARAM_COUNT(func) (func->funcAttrs->numOfParams)
-#define FUNCTION_SCOPE(func) (func->funcAttrs->scope)
-#define FUNCTION_FRAME_SIZE(func) (func->funcAttrs->scope->frameSize)
-
-#define PROGRAM_SCOPE(prog) (prog->progAttrs->scope)
-#define PROGRAM_FRAME_SIZE(prog) (prog->progAttrs->scope->frameSize)
-
-#define VARIABLE_OFFSET(var) (var->varAttrs->localOffset)
-#define VARIABLE_SCOPE(var) (var->varAttrs->scope)
-
-#define PARAMETER_OFFSET(param) (param->paramAttrs->localOffset)
-#define PARAMETER_SCOPE(param) (param->paramAttrs->scope)
-
-#define RETURN_VALUE_OFFSET 0
-#define DYNAMIC_LINK_OFFSET 1
-#define RETURN_ADDRESS_OFFSET 2
-#define STATIC_LINK_OFFSET 3
-
-void genVariableAddress(Object* var);
-void genVariableValue(Object* var);
-
-void genPredefinedProcedureCall(Object* proc);
-void genPredefinedFunctionCall(Object* func);
-
-void genLA(int level, int offset);
-void genLV(int level, int offset);
-void genLC(WORD constant);
-void genLI(void);
-void genINT(int delta);
-void genDCT(int delta);
-Instruction* genJ(CodeAddress label);
-Instruction* genFJ(CodeAddress label);
-void genHL(void);
-void genST(void);
-void genCALL(int level, CodeAddress label);
-void genEP(void);
-void genEF(void);
-void genRC(void);
-void genRI(void);
-void genWRC(void);
-void genWRI(void);
-void genWLN(void);
-void genAD(void);
-void genSB(void);
-void genML(void);
-void genDV(void);
-void genNEG(void);
-void genCV(void);
-void genEQ(void);
-void genNE(void);
-void genGT(void);
-void genGE(void);
-void genLT(void);
-void genLE(void);
-
-void updateJ(Instruction* jmp, CodeAddress label);
-void updateFJ(Instruction* jmp, CodeAddress label);
-
-CodeAddress getCurrentCodeAddress(void);
-int isPredefinedProcedure(Object* proc);
-int isPredefinedFunction(Object* func);
-
+// Khởi tạo và giải phóng
 void initCodeBuffer(void);
 void printCodeBuffer(void);
 void cleanCodeBuffer(void);
 
-int serialize(char* fileName);
+// Lấy/Cập nhật địa chỉ lệnh
+CodeAddress getCurrentCodeAddress(void);
+void updateJ(Instruction* jmp, CodeAddress label); // Cập nhật đích nhảy
+void updateFJ(Instruction* jmp, CodeAddress label);
+
+// Các hàm sinh mã cụ thể
+Instruction* genCode(OpCode op, int p, int q);
+Instruction* genLA(int p, int q);
+Instruction* genLV(int p, int q);
+Instruction* genLC(int q);
+Instruction* genLI(void);
+Instruction* genINT(int q);
+Instruction* genDCT(int q);
+Instruction* genJ(CodeAddress label);
+Instruction* genFJ(CodeAddress label);
+Instruction* genHL(void);
+Instruction* genST(void);
+Instruction* genCALL(int p, CodeAddress label);
+Instruction* genEP(void);
+Instruction* genEF(void);
+Instruction* genRC(void);
+Instruction* genRI(void);
+Instruction* genWRC(void);
+Instruction* genWRI(void);
+Instruction* genWLN(void);
+Instruction* genAD(void);
+Instruction* genSB(void);
+Instruction* genML(void);
+Instruction* genDV(void);
+Instruction* genNEG(void);
+Instruction* genCV(void);
+Instruction* genEQ(void);
+Instruction* genNE(void);
+Instruction* genGT(void);
+Instruction* genLT(void);
+Instruction* genGE(void);
+Instruction* genLE(void);
+
+// Hàm hỗ trợ ngữ nghĩa
+void genVariableAddress(Object* var);
+void genVariableValue(Object* var);
+void genPredefinedProcedureCall(Object* proc);
+void genPredefinedFunctionCall(Object* func);
+
+// Kiểm tra hàm/thủ tục chuẩn
+int isPredefinedProcedure(Object* proc);
+int isPredefinedFunction(Object* func);
 
 #endif
